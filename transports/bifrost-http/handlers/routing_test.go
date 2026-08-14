@@ -11,6 +11,7 @@ import (
 	"github.com/fasthttp/router"
 
 	"github.com/maximhq/bifrost/framework/configstore"
+	"github.com/maximhq/bifrost/plugins/routing"
 	"github.com/maximhq/bifrost/plugins/routing/complexity"
 	"github.com/valyala/fasthttp"
 )
@@ -28,6 +29,14 @@ func (m *mockRoutingManager) ValidateComplexityAnalyzerConfig(_ context.Context,
 
 func (m *mockRoutingManager) GetComplexitySemanticStatus(_ context.Context) (complexity.SemanticStatusInfo, error) {
 	return complexity.SemanticStatusInfo{State: complexity.SemanticStatusDisabled}, nil
+}
+
+func (m *mockRoutingManager) GetComplexitySessionStoreStatus(_ context.Context) (*routing.SessionStoreStatus, error) {
+	return nil, nil
+}
+
+func (m *mockRoutingManager) GetComplexityLLMStatus(_ context.Context) (complexity.LLMStatusInfo, error) {
+	return complexity.LLMStatusInfo{State: complexity.LLMStatusDisabled}, nil
 }
 
 func (m *mockRoutingManager) ReloadComplexityAnalyzerConfig(_ context.Context, config *complexity.AnalyzerConfig) error {
@@ -224,6 +233,16 @@ func TestComplexityAnalyzerConfigResetPersistsDefaultsAndReloads(t *testing.T) {
 		MaxSwitchesPerSession: 3,
 		AlwaysAllowEscalation: true,
 	}
+	// Same again for the llm fallback block, whose prompt is the operator's own
+	// text: reset restores the shipped phrase lists, not a prompt someone wrote.
+	custom.LLM = &complexity.LLMConfig{
+		Provider:            "openai",
+		Model:               "gpt-4.1-mini",
+		Timeout:             3 * time.Second,
+		Prompt:              "route legal work to COMPLEX",
+		MessageHistoryCount: 4,
+		CountTowardBudgets:  true,
+	}
 	if err := store.UpdateComplexityAnalyzerConfig(context.Background(), &custom); err != nil {
 		t.Fatalf("seed custom config: %v", err)
 	}
@@ -258,13 +277,27 @@ func TestComplexityAnalyzerConfigResetPersistsDefaultsAndReloads(t *testing.T) {
 		t.Fatalf("expected the storage selection and similarity floor to survive reset, got %+v", stored.Semantic)
 	}
 	assertSessionSurvivedReset(t, "stored", stored.Session)
+	if stored.LLM == nil {
+		t.Fatalf("expected the llm fallback config to survive reset, got %+v", stored)
+	}
+	if stored.LLM.Provider != "openai" || stored.LLM.Model != "gpt-4.1-mini" || stored.LLM.Timeout != 3*time.Second {
+		t.Fatalf("expected the llm provider, model, and timeout to survive reset, got %+v", stored.LLM)
+	}
+	if stored.LLM.Prompt != "route legal work to COMPLEX" || stored.LLM.MessageHistoryCount != 4 {
+		t.Fatalf("expected the operator's classifier prompt and history window to survive reset, got %+v", stored.LLM)
+	}
+	// Asserted separately because its zero value is a legal setting: a dropped
+	// flag reads as a deliberate "don't bill classifications", not as loss.
+	if !stored.LLM.CountTowardBudgets {
+		t.Fatalf("expected the llm budget attribution flag to survive reset, got %+v", stored.LLM)
+	}
 
 	// The reload and the response body carry the same record: the plugin
 	// reconfigures from one and the configuration UI reseeds its form from the
 	// other, so an embedding block missing from either reads as "unconfigured"
 	// until the next restart or refetch.
-	if manager.reloadedConfig == nil || manager.reloadedConfig.Semantic == nil {
-		t.Fatalf("expected reload with the embedding config retained, got %+v", manager.reloadedConfig)
+	if manager.reloadedConfig == nil || manager.reloadedConfig.Semantic == nil || manager.reloadedConfig.LLM == nil {
+		t.Fatalf("expected reload with the embedding and llm config retained, got %+v", manager.reloadedConfig)
 	}
 	assertSessionSurvivedReset(t, "reloaded", manager.reloadedConfig.Session)
 
@@ -280,6 +313,9 @@ func TestComplexityAnalyzerConfigResetPersistsDefaultsAndReloads(t *testing.T) {
 	// parses back into its milliseconds field. Decoding also accepts a plain
 	// number, so only the raw body pins which of the two is actually emitted.
 	assertRawSessionTTL(t, ctx.Response.Body(), "1h30m0s")
+	if resp.LLM == nil || resp.LLM.Model != "gpt-4.1-mini" {
+		t.Fatalf("expected the response to carry the llm fallback config, got %+v", resp.LLM)
+	}
 	if resp.TierBoundaries != complexity.DefaultTierBoundaries() {
 		t.Fatalf("expected the response to carry default boundaries, got %+v", resp.TierBoundaries)
 	}

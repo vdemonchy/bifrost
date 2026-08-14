@@ -303,8 +303,8 @@ func (p *RoutingPlugin) publishPinnedSessionTier(
 	ctx.AppendRoutingEngineLog(
 		schemas.RoutingEngineRoutingRule,
 		schemas.LogLevelInfo,
-		"Complexity tier held from session: tier="+record.Tier+" identity="+state.Source+
-			" (no classification ran for this turn)",
+		"Complexity session held (pinned mode): tier="+record.Tier+" identity="+state.Source+
+			"; reused the stored tier, no classification ran this turn",
 	)
 }
 

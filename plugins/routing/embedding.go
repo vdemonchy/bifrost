@@ -175,6 +175,38 @@ func recordRoutingEmbedUsage(ctx context.Context, semantic *complexity.SemanticC
 	})
 }
 
+// recordRoutingLLMUsage stores one llm classification completion on the same
+// request-scoped handoff used by semantic classification. Repeated llm calls
+// for the same provider/model are accumulated; a different classifier replaces
+// the previous snapshot. OutputTokens remains non-nil even when zero because
+// its presence tells cost calculation to use chat-completion pricing.
+func recordRoutingLLMUsage(ctx context.Context, llm *complexity.LLMConfig, inputTokens, outputTokens int) {
+	bfCtx, ok := ctx.(*schemas.BifrostContext)
+	if !ok || llm == nil {
+		return
+	}
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
+	if outputTokens < 0 {
+		outputTokens = 0
+	}
+	provider := string(llm.Provider)
+	model := llm.Model
+	if previous, ok := schemas.RoutingDebugFromContext(bfCtx); ok &&
+		previous.OutputTokens != nil && *previous.ProviderUsed == provider && *previous.ModelUsed == model {
+		inputTokens += *previous.InputTokens
+		outputTokens += *previous.OutputTokens
+	}
+	schemas.SetRoutingDebugOnContext(bfCtx, &schemas.BifrostRoutingDebug{
+		ProviderUsed:       &provider,
+		ModelUsed:          &model,
+		InputTokens:        &inputTokens,
+		OutputTokens:       &outputTokens,
+		CountTowardBudgets: llm.CountTowardBudgets,
+	})
+}
+
 // stampRoutingDebug attaches routing-classification telemetry to the response
 // when this request ran a semantic routing embed. Stamped on every such
 // response for visibility, independent of count_toward_budgets — the flag rides

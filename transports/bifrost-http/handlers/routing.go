@@ -21,6 +21,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/framework/configstore"
 	configstoreTables "github.com/maximhq/bifrost/framework/configstore/tables"
+	"github.com/maximhq/bifrost/plugins/routing"
 	"github.com/maximhq/bifrost/plugins/routing/complexity"
 	"github.com/maximhq/bifrost/plugins/routing/rules"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
@@ -49,6 +50,25 @@ type RoutingManager interface {
 	// semantic complexity routing so configuration clients can distinguish
 	// saved from ready.
 	GetComplexitySemanticStatus(ctx context.Context) (complexity.SemanticStatusInfo, error)
+	// GetComplexitySessionStoreStatus reports the session-state backend's
+	// guarantees, or nil when no store is attached.
+	GetComplexitySessionStoreStatus(ctx context.Context) (*routing.SessionStoreStatus, error)
+	// GetComplexityLLMStatus returns the llm fallback classifier's readiness.
+	GetComplexityLLMStatus(ctx context.Context) (complexity.LLMStatusInfo, error)
+}
+
+// complexityStatusResponse is the analyzer status payload. SemanticStatusInfo is
+// embedded rather than nested so every field clients already read stays at the
+// top level; session_store and llm are additive and omitted when absent.
+type complexityStatusResponse struct {
+	complexity.SemanticStatusInfo
+	SessionStore *routing.SessionStoreStatus `json:"session_store,omitempty"`
+	LLM          *complexity.LLMStatusInfo   `json:"llm,omitempty"`
+	// LLMDefaultPrompt is the shipped classification guidance, served so the
+	// UI can seed its prompt editor and offer a reset without holding a copy
+	// that drifts from the gateway's. It is the editable half only; the fixed
+	// tier-name reinforcement is appended server-side and never exposed.
+	LLMDefaultPrompt string `json:"llm_default_prompt,omitempty"`
 }
 
 // RoutingHandler manages HTTP requests for routing rules and complexity analyzer config.
@@ -384,7 +404,21 @@ func (h *RoutingHandler) getComplexitySemanticStatus(ctx *fasthttp.RequestCtx) {
 		SendError(ctx, fasthttp.StatusServiceUnavailable, fmt.Sprintf("failed to get semantic complexity status: %v", err))
 		return
 	}
-	SendJSON(ctx, status)
+	response := complexityStatusResponse{SemanticStatusInfo: status}
+	// The session store and llm classifier state ride the same endpoint and
+	// must not be able to fail the whole response.
+	if sessionStatus, sessionErr := h.routingManager.GetComplexitySessionStoreStatus(ctx); sessionErr != nil {
+		logger.Warn("failed to get complexity session store status: %v", sessionErr)
+	} else {
+		response.SessionStore = sessionStatus
+	}
+	if llmStatus, llmErr := h.routingManager.GetComplexityLLMStatus(ctx); llmErr != nil {
+		logger.Warn("failed to get llm complexity status: %v", llmErr)
+	} else {
+		response.LLM = &llmStatus
+		response.LLMDefaultPrompt = complexity.DefaultLLMClassifierGuidance()
+	}
+	SendJSON(ctx, response)
 }
 
 // getRoutingRules retrieves all routing rules with optional filtering from database

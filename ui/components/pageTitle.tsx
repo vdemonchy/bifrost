@@ -23,33 +23,41 @@ import { createPortal } from "react-dom";
  * `title` is only needed when the route slug wouldn't produce the right label
  * (tab views, "&"-joined names). Without it the topbar falls back to the last
  * path segment.
+ *
+ * `badge` renders inline beside the title (before the description icon) for a
+ * small status chip like a "Beta" tag that should read as part of the heading.
  */
-export default function PageTitle({ title, children }: { title?: string; children?: React.ReactNode }) {
+export default function PageTitle({ title, badge, children }: { title?: string; badge?: React.ReactNode; children?: React.ReactNode }) {
 	useSetTopbarTitle(title);
 	const slot = useDescriptionSlot();
 
-	if (!children || !slot) return null;
+	if (!slot || (!badge && !children)) return null;
 
 	return createPortal(
-		<HoverCard openDelay={100} closeDelay={100}>
-			<HoverCardTrigger asChild>
-				<button
-					type="button"
-					data-testid="page-description-trigger"
-					aria-label="About this page"
-					className="text-muted-foreground hover:text-foreground flex size-5 shrink-0 cursor-help items-center justify-center rounded-sm transition-colors"
-				>
-					<Info className="size-4" strokeWidth={2} />
-				</button>
-			</HoverCardTrigger>
-			<HoverCardContent
-				align="start"
-				side="bottom"
-				className="text-muted-foreground w-80 rounded-sm text-sm leading-relaxed font-normal shadow-none"
-			>
-				{children}
-			</HoverCardContent>
-		</HoverCard>,
+		<span className="flex items-center gap-1.5">
+			{badge}
+			{children && (
+				<HoverCard openDelay={100} closeDelay={100}>
+					<HoverCardTrigger asChild>
+						<button
+							type="button"
+							data-testid="page-description-trigger"
+							aria-label="About this page"
+							className="text-muted-foreground hover:text-foreground flex size-5 shrink-0 cursor-help items-center justify-center rounded-sm transition-colors"
+						>
+							<Info className="size-4" strokeWidth={2} />
+						</button>
+					</HoverCardTrigger>
+					<HoverCardContent
+						align="start"
+						side="bottom"
+						className="text-muted-foreground w-80 rounded-sm text-sm leading-relaxed font-normal shadow-none"
+					>
+						{children}
+					</HoverCardContent>
+				</HoverCard>
+			)}
+		</span>,
 		slot,
 	);
 }

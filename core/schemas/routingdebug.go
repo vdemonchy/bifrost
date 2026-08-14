@@ -4,9 +4,8 @@ package schemas
 //
 // BifrostRoutingDebug is the request-scoped accounting handoff for internal
 // calls made by the routing plugin. It currently records the semantic embedding
-// call used for complexity classification and is the envelope for other
-// complexity-classifier calls; it is not general routing-decision metadata such
-// as the selected tier, rule, provider, or model.
+// or llm completion used for complexity classification; it is not general
+// routing-decision metadata such as the selected tier, rule, provider, or model.
 //
 // Classification runs once in PreRequestHook, before provider execution, while
 // PostLLMHook runs for every retry and configured fallback. The routing plugin
@@ -32,6 +31,7 @@ func (d *BifrostRoutingDebug) Clone() *BifrostRoutingDebug {
 	clone.ProviderUsed = cloneString(d.ProviderUsed)
 	clone.ModelUsed = cloneString(d.ModelUsed)
 	clone.InputTokens = cloneInt(d.InputTokens)
+	clone.OutputTokens = cloneInt(d.OutputTokens)
 	return &clone
 }
 
@@ -74,5 +74,6 @@ func SetRoutingDebugOnContext(ctx *BifrostContext, debug *BifrostRoutingDebug) b
 }
 
 func validRoutingDebug(debug *BifrostRoutingDebug) bool {
-	return debug != nil && debug.ProviderUsed != nil && debug.ModelUsed != nil && debug.InputTokens != nil && *debug.InputTokens >= 0
+	return debug != nil && debug.ProviderUsed != nil && debug.ModelUsed != nil && debug.InputTokens != nil &&
+		*debug.InputTokens >= 0 && (debug.OutputTokens == nil || *debug.OutputTokens >= 0)
 }

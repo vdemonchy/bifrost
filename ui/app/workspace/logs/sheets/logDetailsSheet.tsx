@@ -20,7 +20,7 @@ interface LogDetailSheetProps {
 	canReveal?: boolean;
 	onViewSession?: (sessionId: string, logId: string) => void;
 	onFilterByParentRequestId?: (parentRequestId: string) => void;
-	onFilterByComplexitySessionId?: (sessionID: string) => void;
+	onFilterByComplexitySessionId?: (sessionId: string) => void;
 }
 
 export function LogDetailSheet({

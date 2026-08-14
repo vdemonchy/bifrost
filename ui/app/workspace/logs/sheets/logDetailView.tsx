@@ -632,7 +632,7 @@ interface LogDetailViewProps {
 	onClose?: () => void;
 	headerAction?: ReactNode;
 	onFilterByParentRequestId?: (parentRequestId: string) => void;
-	onFilterByComplexitySessionId?: (sessionID: string) => void;
+	onFilterByComplexitySessionId?: (sessionId: string) => void;
 }
 
 export function LogDetailView({

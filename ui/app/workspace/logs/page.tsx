@@ -390,13 +390,13 @@ export default function LogsPage() {
 	);
 
 	const handleFilterByComplexitySessionId = useCallback(
-		(sessionID: string) => {
+		(sessionId: string) => {
 			setSelectedSessionId(null);
 			setSessionHighlightedLogId(null);
 			setUrlState({ selected_log: "" }, { history: "replace" });
 			setFilters({
 				...filters,
-				complexity_session_id: sessionID,
+				complexity_session_id: sessionId,
 			});
 		},
 		[filters, setFilters, setUrlState],

@@ -358,6 +358,28 @@ func TestRecordRoutingEmbedUsageReplacesPreviousSnapshot(t *testing.T) {
 	assert.Equal(t, 7, *usage.InputTokens)
 }
 
+func TestRecordRoutingLLMUsageUsesSharedSnapshot(t *testing.T) {
+	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+	defer ctx.Cancel()
+	cfg := &complexity.LLMConfig{
+		Provider:           schemas.OpenAI,
+		Model:              "gpt-4o-mini",
+		CountTowardBudgets: true,
+	}
+
+	recordRoutingLLMUsage(ctx, cfg, 20, 4)
+	recordRoutingLLMUsage(ctx, cfg, 7, 2)
+
+	usage, ok := schemas.RoutingDebugFromContext(ctx)
+	require.True(t, ok)
+	assert.Equal(t, "openai", *usage.ProviderUsed)
+	assert.Equal(t, "gpt-4o-mini", *usage.ModelUsed)
+	assert.Equal(t, 27, *usage.InputTokens)
+	require.NotNil(t, usage.OutputTokens, "non-nil output tokens select chat pricing")
+	assert.Equal(t, 6, *usage.OutputTokens)
+	assert.True(t, usage.CountTowardBudgets)
+}
+
 // A provider that reports a negative token count must not have it recorded:
 // the stamp feeds cost calculation and warmup budget attribution, where a
 // negative count would subtract from billed usage.

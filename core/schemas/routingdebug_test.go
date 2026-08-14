@@ -7,11 +7,12 @@ import (
 
 func TestRoutingDebugContextReturnsOwnedInitialAttemptSnapshot(t *testing.T) {
 	ctx := NewBifrostContext(context.Background(), NoDeadline)
-	provider, model, tokens := "openai", "text-embedding-3-small", 17
+	provider, model, tokens, outputTokens := "openai", "gpt-4o-mini", 17, 3
 	requireSet := SetRoutingDebugOnContext(ctx, &BifrostRoutingDebug{
 		ProviderUsed:       &provider,
 		ModelUsed:          &model,
 		InputTokens:        &tokens,
+		OutputTokens:       &outputTokens,
 		CountTowardBudgets: true,
 	})
 	if !requireSet {
@@ -23,9 +24,10 @@ func TestRoutingDebugContextReturnsOwnedInitialAttemptSnapshot(t *testing.T) {
 		t.Fatal("InitialAttemptRoutingDebugFromContext() = false")
 	}
 	*first.InputTokens = 99
+	*first.OutputTokens = 99
 	second, ok := InitialAttemptRoutingDebugFromContext(ctx)
-	if !ok || *second.InputTokens != 17 {
-		t.Fatalf("owned snapshot input tokens = %v, want 17", second)
+	if !ok || *second.InputTokens != 17 || *second.OutputTokens != 3 {
+		t.Fatalf("owned snapshot = %v, want input=17 output=3", second)
 	}
 }
 
@@ -56,13 +58,26 @@ func TestInitialAttemptRoutingDebugRejectsRetriesAndFallbacks(t *testing.T) {
 }
 
 func TestSetRoutingDebugOnContextRejectsMalformedUsage(t *testing.T) {
-	ctx := NewBifrostContext(context.Background(), NoDeadline)
-	provider, model, negativeTokens := "openai", "text-embedding-3-small", -1
-	if SetRoutingDebugOnContext(ctx, &BifrostRoutingDebug{
-		ProviderUsed: &provider,
-		ModelUsed:    &model,
-		InputTokens:  &negativeTokens,
-	}) {
-		t.Fatal("SetRoutingDebugOnContext() accepted negative input tokens")
+	provider, model := "openai", "gpt-4o-mini"
+	negativeOutput := -1
+	for _, test := range []struct {
+		name         string
+		inputTokens  int
+		outputTokens *int
+	}{
+		{name: "negative input", inputTokens: -1},
+		{name: "negative output", outputTokens: &negativeOutput},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := NewBifrostContext(context.Background(), NoDeadline)
+			if SetRoutingDebugOnContext(ctx, &BifrostRoutingDebug{
+				ProviderUsed: &provider,
+				ModelUsed:    &model,
+				InputTokens:  &test.inputTokens,
+				OutputTokens: test.outputTokens,
+			}) {
+				t.Fatal("SetRoutingDebugOnContext() accepted malformed usage")
+			}
+		})
 	}
 }
