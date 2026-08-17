@@ -320,6 +320,7 @@ var videoGenerationParamsKnownFields = map[string]bool{
 	"size":            true,
 	"negative_prompt": true,
 	"seed":            true,
+	"type":            true,
 	"video_uri":       true,
 	"audio":           true,
 	"fallbacks":       true,
@@ -2663,13 +2664,15 @@ func (h *CompletionHandler) videoGeneration(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if req.VideoGenerationInput == nil || req.Prompt == "" {
-		SendError(ctx, fasthttp.StatusBadRequest, "prompt cannot be empty")
-		return
-	}
-
 	if req.VideoGenerationParameters == nil {
 		req.VideoGenerationParameters = &schemas.VideoGenerationParameters{}
+	}
+
+	// Operations driven by an input asset (video upscale, image-to-3D) carry no prompt.
+	if req.VideoGenerationInput == nil ||
+		(req.Prompt == "" && req.InputReference == nil && req.VideoURI == nil) {
+		SendError(ctx, fasthttp.StatusBadRequest, "prompt, input_reference or video_uri is required")
+		return
 	}
 
 	extraParams, err := extractExtraParams(ctx.PostBody(), videoGenerationParamsKnownFields)

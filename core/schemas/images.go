@@ -190,10 +190,20 @@ type ImageGenerationResponseParameters struct {
 }
 
 type ImageData struct {
-	URL           string `json:"url,omitempty"`
-	B64JSON       string `json:"b64_json,omitempty"`
-	RevisedPrompt string `json:"revised_prompt,omitempty"`
-	Index         int    `json:"index"`
+	URL           string           `json:"url,omitempty"`
+	B64JSON       string           `json:"b64_json,omitempty"`
+	RevisedPrompt string           `json:"revised_prompt,omitempty"`
+	Index         int              `json:"index"`
+	Detections    []ImageDetection `json:"detections,omitempty"`
+}
+
+// ImageDetection is a region located by a masking or segmentation model. Coordinates are absolute
+// pixels in the input image's own coordinate space, not normalized.
+type ImageDetection struct {
+	XMin int `json:"x_min"`
+	YMin int `json:"y_min"`
+	XMax int `json:"x_max"`
+	YMax int `json:"y_max"`
 }
 
 type ImageUsage struct {
@@ -329,7 +339,7 @@ type ImageInput struct {
 }
 
 type ImageEditParameters struct {
-	Type              *string                `json:"type,omitempty"`           // "inpainting", "outpainting", "background_removal", "remove_background", "erase_object", "recolor", "search_replace", "control_sketch", "control_structure", "style_guide", "style_transfer", "upscale_fast", "upscale_creative", "upscale_conservative"
+	Type              *string                `json:"type,omitempty"`           // "inpainting", "outpainting", "background_removal", "remove_background", "erase_object", "recolor", "search_replace", "control_sketch", "control_structure", "style_guide", "style_transfer", "upscale", "upscale_fast", "upscale_creative", "upscale_conservative", "mask", "segmentation"
 	Background        *string                `json:"background,omitempty"`     // "transparent", "opaque", "auto"
 	InputFidelity     *string                `json:"input_fidelity,omitempty"` // "low", "high"
 	Mask              []byte                 `json:"mask,omitempty"`

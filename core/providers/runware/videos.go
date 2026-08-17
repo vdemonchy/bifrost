@@ -19,25 +19,23 @@ import (
 // the video task type; other task types (3D uses "resolution", etc.) supply their own dimensions
 // through extra_params.
 func ToRunwareVideoGenerationRequest(bifrostReq *schemas.BifrostVideoGenerationRequest) (*RunwareInferenceRequest, error) {
+	// Resolve the task type before building the request; it decides which modality-specific
+	// defaults apply below.
+	taskType := runwareVideoTaskType(bifrostReq.Params)
+	isVideo := taskType == taskTypeVideoInference
+	// Tool task types operate on an existing video rather than generating one.
+	isVideoTool := taskType == taskTypeUpscale || taskType == taskTypeRemoveBackground
+
 	if bifrostReq.Input == nil {
 		return nil, fmt.Errorf("input is required")
 	}
-
-	// Resolve the task type from extra_params before building the request; it decides which
-	// modality-specific defaults apply below.
-	taskType := taskTypeVideoInference
-	if bifrostReq.Params != nil {
-		if override, ok := schemas.SafeExtractString(bifrostReq.Params.ExtraParams["taskType"]); ok && override != "" {
-			taskType = override
-		}
-	}
-	isVideo := taskType == taskTypeVideoInference
 
 	request := &RunwareInferenceRequest{
 		TaskType:       taskType,
 		TaskUUID:       uuid.New().String(),
 		DeliveryMethod: new(deliveryMethodAsync),
 		Model:          bifrostReq.Model,
+		IncludeCost:    new(true),
 	}
 
 	// Runware requires explicit width/height for video and rejects square sizes on some models;
@@ -51,13 +49,27 @@ func ToRunwareVideoGenerationRequest(bifrostReq *schemas.BifrostVideoGenerationR
 		request.PositivePrompt = &bifrostReq.Input.Prompt
 	}
 
-	// Input reference image (image-to-video): anchored to the first frame.
-	if bifrostReq.Input.InputReference != nil && *bifrostReq.Input.InputReference != "" {
+	// Input asset. Tool tasks operate on the source video; 3D takes the reference image as a
+	// nested input in the singular or array form the model expects; video generation anchors it
+	// to the first frame.
+	switch {
+	case isVideoTool:
+		if bifrostReq.Input.VideoURI != nil && *bifrostReq.Input.VideoURI != "" {
+			request.Inputs = &RunwareInputs{Video: bifrostReq.Input.VideoURI}
+		}
+	case bifrostReq.Input.InputReference != nil && *bifrostReq.Input.InputReference != "":
 		sanitizedURL, err := schemas.SanitizeImageURL(*bifrostReq.Input.InputReference)
 		if err != nil {
 			return nil, fmt.Errorf("invalid input reference: %w", err)
 		}
-		request.FrameImages = []RunwareFrameImage{{InputImage: sanitizedURL, Frame: new("first")}}
+		switch {
+		case taskType != taskType3DInference:
+			request.FrameImages = []RunwareFrameImage{{InputImage: sanitizedURL, Frame: new("first")}}
+		case uses3DImageArrayInput(bifrostReq.Model):
+			request.Inputs = &RunwareInputs{Images: []string{sanitizedURL}}
+		default:
+			request.Inputs = &RunwareInputs{Image: &sanitizedURL}
+		}
 	}
 
 	if bifrostReq.Params != nil {
@@ -80,9 +92,55 @@ func ToRunwareVideoGenerationRequest(bifrostReq *schemas.BifrostVideoGenerationR
 		}
 
 		request.ExtraParams = params.ExtraParams
+
+		// Promote the Runware-native fields to typed properties so they reach the wire without
+		// extra-param passthrough, and drop them from ExtraParams so they are not sent twice.
+		if v, ok := runwareSettings(request.ExtraParams["settings"]); ok {
+			delete(request.ExtraParams, "settings")
+			request.Settings = v
+		}
+		if v, ok := runwareSettings(request.ExtraParams["providerSettings"]); ok {
+			delete(request.ExtraParams, "providerSettings")
+			request.ProviderSettings = v
+		}
+		if v, ok := schemas.SafeExtractInt(request.ExtraParams["upscaleFactor"]); ok {
+			delete(request.ExtraParams, "upscaleFactor")
+			request.UpscaleFactor = &v
+		}
+		// The /videos schema carries no output_format, so the container (MP4/WEBM/MOV) is only
+		// selectable through extra params. Video background removal needs an alpha-capable one.
+		if v, ok := schemas.SafeExtractStringPointer(request.ExtraParams["outputFormat"]); ok {
+			if format := runwareOutputFormat(v); format != nil {
+				delete(request.ExtraParams, "outputFormat")
+				request.OutputFormat = format
+			}
+		}
 	}
 
 	return request, nil
+}
+
+// runwareVideoTaskType resolves the Runware task type for a /videos request. The neutral "type"
+// parameter selects the operation, the taskType extra param stays as a raw escape hatch for task
+// types Bifrost does not model, and video generation is the default.
+func runwareVideoTaskType(params *schemas.VideoGenerationParameters) string {
+	if params == nil {
+		return taskTypeVideoInference
+	}
+	if params.Type != nil {
+		switch strings.ReplaceAll(strings.ToLower(strings.TrimSpace(*params.Type)), "-", "_") {
+		case "3d":
+			return taskType3DInference
+		case "upscale":
+			return taskTypeUpscale
+		case "background_removal", "remove_background", "remove_bg":
+			return taskTypeRemoveBackground
+		}
+	}
+	if override, ok := schemas.SafeExtractString(params.ExtraParams["taskType"]); ok && override != "" {
+		return override
+	}
+	return taskTypeVideoInference
 }
 
 // ToBifrostVideoGenerationResponse converts a Runware task result to a Bifrost video response.
@@ -109,10 +167,16 @@ func ToBifrostVideoGenerationResponse(result *RunwareResult) *schemas.BifrostVid
 	}
 
 	if result.VideoURL != "" {
+		// outputFormat accepts MP4, WEBM and MOV, so derive the type from the URL rather than
+		// assuming MP4; fall back to MP4 for URLs that carry no usable extension.
+		contentType := contentTypeForAssetURL(result.VideoURL)
+		if contentType == "application/octet-stream" {
+			contentType = "video/mp4"
+		}
 		response.Videos = append(response.Videos, schemas.VideoOutput{
 			Type:        schemas.VideoOutputTypeURL,
 			URL:         new(result.VideoURL),
-			ContentType: "video/mp4",
+			ContentType: contentType,
 		})
 	}
 

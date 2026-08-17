@@ -84,6 +84,7 @@ func (b *BifrostVideoGenerationRequest) GetExtraParams() map[string]interface{} 
 type VideoGenerationInput struct {
 	Prompt         string  `json:"prompt"`
 	InputReference *string `json:"input_reference,omitempty"` // Primary image for image-to-video (OpenAI-compatible)
+	VideoURI       *string `json:"video_uri,omitempty"`       // Source video for video-to-video and video tool tasks
 }
 
 type VideoGenerationParameters struct {
@@ -92,7 +93,7 @@ type VideoGenerationParameters struct {
 
 	NegativePrompt *string        `json:"negative_prompt,omitempty"`
 	Seed           *int           `json:"seed,omitempty"`
-	VideoURI       *string        `json:"video_uri,omitempty"` // for video to video generation
+	Type           *string        `json:"type,omitempty"` // operation selector, e.g. "3d", "upscale"
 	Audio          *bool          `json:"audio,omitempty"`
 	ExtraParams    map[string]any `json:"-"`
 }

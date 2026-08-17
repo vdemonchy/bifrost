@@ -2,6 +2,7 @@ package runware
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
@@ -24,6 +25,7 @@ func ToRunwareImageGenerationRequest(bifrostReq *schemas.BifrostImageGenerationR
 		PositivePrompt: &bifrostReq.Input.Prompt,
 		Width:          &width,
 		Height:         &height,
+		IncludeCost:    new(true),
 	}
 
 	if bifrostReq.Params != nil {
@@ -63,6 +65,10 @@ func ToRunwareImageEditRequest(bifrostReq *schemas.BifrostImageEditRequest) (*Ru
 		return nil, fmt.Errorf("at least one input image is required")
 	}
 
+	if taskType := runwareImageEditTaskType(bifrostReq.Params); taskType != "" {
+		return toRunwareImageToolRequest(taskType, bifrostReq)
+	}
+
 	width, height := defaultRunwareWidth, defaultRunwareHeight
 	request := &RunwareInferenceRequest{
 		TaskType:       taskTypeImageInference,
@@ -71,6 +77,7 @@ func ToRunwareImageEditRequest(bifrostReq *schemas.BifrostImageEditRequest) (*Ru
 		PositivePrompt: &bifrostReq.Input.Prompt,
 		Width:          &width,
 		Height:         &height,
+		IncludeCost:    new(true),
 	}
 
 	// Seed image: the base image being edited (raw bytes -> base64 data URI).
@@ -102,6 +109,88 @@ func ToRunwareImageEditRequest(bifrostReq *schemas.BifrostImageEditRequest) (*Ru
 	return request, nil
 }
 
+// runwareImageEditTaskType maps the neutral edit type onto a Runware tool task type. An empty
+// result means the edit runs as a regular imageInference task (image-to-image, inpainting,
+// outpainting).
+func runwareImageEditTaskType(params *schemas.ImageEditParameters) string {
+	if params == nil || params.Type == nil {
+		return ""
+	}
+	switch strings.ReplaceAll(strings.ToLower(strings.TrimSpace(*params.Type)), "-", "_") {
+	case "upscale":
+		return taskTypeUpscale
+	case "background_removal", "remove_background", "remove_bg":
+		return taskTypeRemoveBackground
+	case "mask", "segmentation":
+		return taskTypeImageMasking
+	}
+	return ""
+}
+
+// runwareResultAssets resolves a task result's output family. Runware names an artifact after what
+// the task produces, so masking returns maskImage* and ControlNet preprocessing returns
+// guideImage* rather than reusing image*; reading only image* would silently drop the output.
+func runwareResultAssets(result *RunwareResult) (url string, base64Data string, dataURI string) {
+	switch {
+	case result.ImageURL != "", result.ImageBase64Data != "", result.ImageDataURI != "":
+		return result.ImageURL, result.ImageBase64Data, result.ImageDataURI
+	case result.MaskImageURL != "", result.MaskImageBase64Data != "", result.MaskImageDataURI != "":
+		return result.MaskImageURL, result.MaskImageBase64Data, result.MaskImageDataURI
+	case result.GuideImageURL != "", result.GuideImageBase64Data != "", result.GuideImageDataURI != "":
+		return result.GuideImageURL, result.GuideImageBase64Data, result.GuideImageDataURI
+	}
+	return "", "", ""
+}
+
+// toRunwareImageToolRequest builds a Runware single-image tool task (upscale, removeBackground).
+// These share one envelope: the image is nested under "inputs", model tuning goes in "settings"
+// and "providerSettings", and none of the imageInference fields (prompt, dimensions, steps) apply,
+// so they are left unset. Runware-native fields are read from extra params under their own names.
+func toRunwareImageToolRequest(taskType string, bifrostReq *schemas.BifrostImageEditRequest) (*RunwareInferenceRequest, error) {
+	image := providerUtils.FileBytesToBase64DataURL(bifrostReq.Input.Images[0].Image)
+	request := &RunwareInferenceRequest{
+		TaskType:    taskType,
+		TaskUUID:    uuid.New().String(),
+		Model:       bifrostReq.Model,
+		Inputs:      &RunwareInputs{Image: &image},
+		IncludeCost: new(true),
+	}
+
+	if bifrostReq.Params == nil {
+		return request, nil
+	}
+	params := bifrostReq.Params
+
+	request.OutputType = runwareOutputType(params.ResponseFormat)
+	request.OutputFormat = runwareOutputFormat(params.OutputFormat)
+	request.OutputQuality = params.OutputCompression
+	request.ExtraParams = params.ExtraParams
+
+	// Consume the fields promoted to typed properties so they are not also re-sent verbatim
+	// when extra-param passthrough is enabled.
+	if v, ok := runwareSettings(request.ExtraParams["settings"]); ok {
+		delete(request.ExtraParams, "settings")
+		request.Settings = v
+	}
+	if v, ok := runwareSettings(request.ExtraParams["providerSettings"]); ok {
+		delete(request.ExtraParams, "providerSettings")
+		request.ProviderSettings = v
+	}
+
+	if taskType == taskTypeUpscale {
+		if v, ok := schemas.SafeExtractInt(request.ExtraParams["upscaleFactor"]); ok {
+			delete(request.ExtraParams, "upscaleFactor")
+			request.UpscaleFactor = &v
+		}
+		if v, ok := schemas.SafeExtractInt(request.ExtraParams["targetMegapixels"]); ok {
+			delete(request.ExtraParams, "targetMegapixels")
+			request.TargetMegapixels = &v
+		}
+	}
+
+	return request, nil
+}
+
 // ToBifrostImageGenerationResponse converts a Runware response envelope to a Bifrost image response.
 func ToBifrostImageGenerationResponse(resp *RunwareResponse) (*schemas.BifrostImageGenerationResponse, *schemas.BifrostError) {
 	if resp == nil {
@@ -125,13 +214,20 @@ func ToBifrostImageGenerationResponse(resp *RunwareResponse) (*schemas.BifrostIm
 	var totalCost float64
 	for i, img := range resp.Data {
 		data := schemas.ImageData{Index: i}
+		url, base64Data, dataURI := runwareResultAssets(&img)
 		switch {
-		case img.ImageURL != "":
-			data.URL = img.ImageURL
-		case img.ImageBase64Data != "":
-			data.B64JSON = img.ImageBase64Data
-		case img.ImageDataURI != "":
-			data.URL = img.ImageDataURI
+		case url != "":
+			data.URL = url
+		case base64Data != "":
+			data.B64JSON = base64Data
+		case dataURI != "":
+			data.URL = dataURI
+		}
+		// Masking models report the regions they located alongside the mask itself.
+		for _, d := range img.Detections {
+			data.Detections = append(data.Detections, schemas.ImageDetection{
+				XMin: d.XMin, YMin: d.YMin, XMax: d.XMax, YMax: d.YMax,
+			})
 		}
 		bifrostResp.Data = append(bifrostResp.Data, data)
 		if img.Seed != nil {
