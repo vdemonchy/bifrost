@@ -301,7 +301,6 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_mcp_code_mode_binding_level_column"}, run: migrationAddMCPCodeModeBindingLevelColumn},
 	{IDs: []string{"normalize_mcp_client_names"}, run: migrationNormalizeMCPClientNames},
 	{IDs: []string{"move_keys_to_provider_config"}, run: migrationMoveKeysToProviderConfig},
-	{IDs: []string{"add_plugin_version_column"}, run: migrationAddPluginVersionColumn},
 	{IDs: []string{"add_send_back_raw_request_columns"}, run: migrationAddSendBackRawRequestColumns},
 	{IDs: []string{"add_config_hash_column"}, run: migrationAddConfigHashColumn},
 	{IDs: []string{"add_virtual_key_config_hash_column"}, run: migrationAddVirtualKeyConfigHashColumn},
@@ -2593,35 +2592,6 @@ func migrationMoveKeysToProviderConfig(ctx context.Context, db *gorm.DB, logger 
 	err := m.Migrate()
 	if err != nil {
 		return fmt.Errorf("error while running move keys to provider config migration: %s", err.Error())
-	}
-	return nil
-}
-
-// migrationAddPluginVersionColumn adds the version column to the plugin table
-func migrationAddPluginVersionColumn(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
-	migrationName := "add_plugin_version_column"
-	logger.Info("[configstore] starting migration %s", migrationName)
-	defer logger.Info("[configstore] finished migration %s", migrationName)
-	m := migrator.New(db, migrator.DefaultOptions, []*migrator.Migration{{
-		ID: migrationName,
-		Migrate: func(tx *gorm.DB) error {
-			tx = tx.WithContext(ctx)
-			if err := addColumnIfNotExists(tx, logger, &tables.TablePlugin{}, "version"); err != nil {
-				return err
-			}
-			return nil
-		},
-		Rollback: func(tx *gorm.DB) error {
-			tx = tx.WithContext(ctx)
-			if err := dropColumnIfExists(tx, logger, &tables.TablePlugin{}, "version"); err != nil {
-				return err
-			}
-			return nil
-		},
-	}})
-	err := m.Migrate()
-	if err != nil {
-		return fmt.Errorf("error while running add plugin version column migration: %s", err.Error())
 	}
 	return nil
 }
